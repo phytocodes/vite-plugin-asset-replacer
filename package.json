@@ -1,0 +1,32 @@
+{
+  "name": "vite-plugin-asset-replacer",
+  "version": "0.1.0",
+  "description": "Vite plugin to handle asset paths in SCSS/SASS files.",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsup"
+  },
+  "author": {
+    "name": "phytocodes",
+    "url": "https://github.com/phytocodes"
+  },
+  "peerDependencies": {
+    "vite": "^5.0.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.3.7",
+    "@types/node": "^20.19.25",
+    "tsup": "^8.5.1",
+    "typescript": "^5.9.3"
+  }
+}

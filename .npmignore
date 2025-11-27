@@ -1,0 +1,14 @@
+# ソースコードと設定ファイル
+src/
+tsconfig.json
+tsup.config.ts
+biome.json
+.vscode/
+
+# 開発用ロックファイル
+npm-shrinkwrap.json
+package-lock.json
+
+# その他、不要なメタファイル
+.gitignore
+.github/

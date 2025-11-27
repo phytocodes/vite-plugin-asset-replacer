@@ -1,0 +1,7 @@
+{
+	"recommendations": [
+		"biomejs.biome",
+		"bmewburn.vscode-intelephense-client",
+		"stylelint.vscode-stylelint"
+	]
+}
