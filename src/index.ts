@@ -1,100 +1,115 @@
-import * as fs from 'fs';
-import * as path from 'path';
-import { Plugin, ResolvedConfig } from 'vite';
+import * as fs from "node:fs";
+import * as path from "node:path";
+import type { Plugin, ResolvedConfig } from "vite";
 
 /**
- * SCSS/SASSファイル内のアセットパスを処理するViteプラグイン
+ * SCSS/SASS/CSSファイル内のアセットパスを処理するViteプラグイン
  * - .webp 拡張子の削除
  * - publicディレクトリ内に元のファイルが存在しない場合、@2xファイルに置換
+ * - ビルド時、CSS内の「/images」パスを「../images」に強制置換
  */
 const viteScssAssetReplacer = (): Plugin => {
-	let isServe: boolean = false;
-	// publicDir は絶対パス文字列として取得されます
-	let publicDir: string = '';
+  let config: ResolvedConfig;
 
-	return {
-		name: 'vite-scss-asset-replacer',
+  return {
+    name: "vite-scss-asset-replacer",
 
-		// configResolved の引数は ResolvedConfig 型
-		configResolved(config: ResolvedConfig) {
-			isServe = config.command === 'serve';
-			publicDir = config.publicDir;
-		},
+    // configResolved の引数は ResolvedConfig 型
+    configResolved(resolvedConfig: ResolvedConfig) {
+      config = resolvedConfig;
+    },
 
-		// transform の引数は code: string, id: string、戻り値は TransformResult | null
-		transform(code: string, id: string) {
-			// 開発サーバー時かつSCSS/SASSファイルでのみ実行
-			if (!isServe || !/\.(scss|sass)$/.test(id)) {
-				return null;
-			}
+    // transform の引数は code: string, id: string、戻り値は TransformResult | null
+    transform(code: string, id: string) {
+      // SCSS/SASS/CSSファイルでのみ実行（ビルド時にも置換ルールを適用するため isServe 判定は除外）
+      if (!/\.(scss|sass|css)$/.test(id)) {
+        return null;
+      }
 
-			let newCode = code;
-			// 1. .webp の削除
-			newCode = newCode.replace(/\.webp/gi, '');
+      let newCode = code;
 
-			// 2. @2x ファイルへの置換ロジック
-			// url(...) の中のパスを検索する正規表現
-			const urlRegex = /url\(['"]?([^'")]+\.(png|jpe?g|svg|gif))['"]?\)/gi;
+      // url(...) の中のパスを検索する正規表現（webpも対象に含める）
+      const urlRegex = /url\(['"]?([^'")]+\.(png|jpe?g|svg|gif|webp))['"]?\)/gi;
 
-			newCode = newCode.replace(urlRegex, (match, assetPath) => {
-				// assetPath の型は TypeScript によって string と推論されます
+      newCode = newCode.replace(urlRegex, (match, assetPath) => {
+        let targetPath = assetPath;
 
-				// --- パスの正規化: publicDir からの相対パスを生成 ---
-				const normalizedAssetPath = assetPath
-						.replace(/^\.\.\//, '') // '../' を削除
-						.replace(/^\//, '');     // '/' を削除
+        // 1. .webp の除去（url()内のみに限定）
+        targetPath = targetPath.replace(/\.webp/gi, "");
 
-				// 検索対象の絶対パス（publicDir 内）
-				const absoluteAssetPath = path.resolve(publicDir, normalizedAssetPath);
+        // 2. @2x ファイルへの置換ロジック
+        // --- パスの正規化: publicDir からの相対パスを生成 ---
+        const normalizedPath = targetPath.replace(/^(\.\.\/|\/)/, "");
+        // 検索対象の絶対パス（publicDir 内）
+        const absolutePath = path.resolve(config.publicDir, normalizedPath);
 
-				// -------------------------------------------------------------
-				// 元のファイルが存在するかどうかを publicDir のみでチェック
-				// -------------------------------------------------------------
-				if (!fs.existsSync(absoluteAssetPath)) {
+        // -------------------------------------------------------------
+        // 元のファイルが存在するかどうかを publicDir のみでチェック
+        // -------------------------------------------------------------
+        if (!fs.existsSync(absolutePath)) {
+          const ext = path.extname(normalizedPath);
+          if (!ext) return match; // 拡張子がない場合はスキップ
 
-					const lastDotIndex = normalizedAssetPath.lastIndexOf('.');
-					if (lastDotIndex === -1) {
-						// ドットがない場合は画像ファイルと見なさない
-						return match;
-					}
+          const base = normalizedPath.slice(0, -ext.length);
+          // @2x のファイル名を作成
+          const retinaPath = `${base}@2x${ext}`;
+          // @2x ファイルの絶対パス（publicDir 内）
+          const absoluteRetinaPath = path.resolve(config.publicDir, retinaPath);
 
-					const baseName = normalizedAssetPath.substring(0, lastDotIndex);
-					const ext = normalizedAssetPath.substring(lastDotIndex);
+          // -------------------------------------------------------------
+          // @2x ファイルが publicDir 内に存在するかチェック
+          // -------------------------------------------------------------
+          if (fs.existsSync(absoluteRetinaPath)) {
+            // 存在すれば、元のパス形式（/ か ../ か）を維持して置換
+            const prefix = assetPath.startsWith("/")
+              ? "/"
+              : assetPath.startsWith("../")
+              ? "../"
+              : "";
+            targetPath = prefix + retinaPath;
+          }
+        }
 
-					// @2x のファイル名を作成
-					const retinaFileName = `${baseName}@2x${ext}`;
+        // 最終的なパスを url("...") 形式で返す
+        return `url("${targetPath}")`;
+      });
 
-					// @2x ファイルの絶対パス（publicDir 内）
-					const absoluteRetinaAssetPath = path.resolve(publicDir, retinaFileName);
+      return {
+        code: newCode,
+      };
+    },
 
-					// -------------------------------------------------------------
-					// @2x ファイルが publicDir 内に存在するかチェック
-					// -------------------------------------------------------------
-					if (fs.existsSync(absoluteRetinaAssetPath)) {
+    // -------------------------------------------------------------
+    // ビルド後の最終調整: 生成されたCSS内のパスを一括置換
+    // -------------------------------------------------------------
+    generateBundle(_, bundle) {
+      // 開発サーバー（serve）時は実行しない
+      if (config.command === "serve") return;
 
-						// 存在すれば、SCSS内のパスを @2x のものに置き換える
-						let newAssetPath = retinaFileName;
+      for (const fileName in bundle) {
+        const asset = bundle[fileName];
+        // CSSアセットかつソースが存在する場合のみ処理
+        if (
+          asset.type === "asset" &&
+          fileName.endsWith(".css") &&
+          asset.source
+        ) {
+          const source = asset.source.toString();
 
-						if (assetPath.startsWith('/')) {
-							newAssetPath = `/${retinaFileName}`;
-						} else if (assetPath.startsWith('../')) {
-							newAssetPath = `../${retinaFileName}`;
-						}
+          // 「/images」を「../images」に変換（すでに ../ が付いているものは除外）
+          const newSource = source.replace(/(?<!\.\.)\/images/g, "../images");
 
-						const newMatch = match.replace(assetPath, newAssetPath);
-						return newMatch;
-					}
-				}
-
-				return match;
-			});
-
-			// 戻り値は { code: string } または null
-			return {
-				code: newCode,
-			};
-		},
-	};
+          // 内容に変更があった場合のみ、メモリ上のソースを上書き
+          if (newSource !== source) {
+            asset.source = newSource;
+            console.log(
+              `✨ Path replacement complete: "/images" -> "../images" [${fileName}]`
+            );
+          }
+        }
+      }
+    },
+  };
 };
 
 export default viteScssAssetReplacer;
