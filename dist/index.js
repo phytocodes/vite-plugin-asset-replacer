@@ -5,11 +5,9 @@ var viteScssAssetReplacer = () => {
   let config;
   return {
     name: "vite-scss-asset-replacer",
-    // configResolved の引数は ResolvedConfig 型
     configResolved(resolvedConfig) {
       config = resolvedConfig;
     },
-    // transform の引数は code: string, id: string、戻り値は TransformResult | null
     transform(code, id) {
       if (!/\.(scss|sass|css)$/.test(id)) {
         return null;
@@ -18,7 +16,9 @@ var viteScssAssetReplacer = () => {
       const urlRegex = /url\(['"]?([^'")]+\.(png|jpe?g|svg|gif|webp))['"]?\)/gi;
       newCode = newCode.replace(urlRegex, (match, assetPath) => {
         let targetPath = assetPath;
-        targetPath = targetPath.replace(/\.webp/gi, "");
+        if (config.command === "serve") {
+          targetPath = targetPath.replace(/\.webp/gi, "");
+        }
         const normalizedPath = targetPath.replace(/^(\.\.\/|\/)/, "");
         const absolutePath = path.resolve(config.publicDir, normalizedPath);
         if (!fs.existsSync(absolutePath)) {
@@ -34,13 +34,8 @@ var viteScssAssetReplacer = () => {
         }
         return `url("${targetPath}")`;
       });
-      return {
-        code: newCode
-      };
+      return { code: newCode };
     },
-    // -------------------------------------------------------------
-    // ビルド後の最終調整: 生成されたCSS内のパスを一括置換
-    // -------------------------------------------------------------
     generateBundle(_, bundle) {
       if (config.command === "serve") return;
       for (const fileName in bundle) {
@@ -51,7 +46,7 @@ var viteScssAssetReplacer = () => {
           if (newSource !== source) {
             asset.source = newSource;
             console.log(
-              `\u2728 Path replacement complete: "/images" -> "../images" [${fileName}]`
+              `\u2728 Asset paths converted to relative (../images) in: ${fileName}`
             );
           }
         }
